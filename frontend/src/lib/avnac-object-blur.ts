@@ -1,11 +1,12 @@
-import type { Canvas, FabricObject } from 'fabric'
+import type { Canvas, FabricObject, Group } from 'fabric'
 
 const PATCH_KEY = '__avnacObjectCanvasBlurInstalled__'
 
 /** Same scale previously used for FabricImage `filters.Blur` (0–1 → UI %). */
 const LEGACY_IMAGE_BLUR_UI_MAX = 0.35
 
-const MAX_CSS_BLUR_PX = 28
+/** At 100% slider, CSS blur() radius in px (canvas filter). */
+const MAX_CSS_BLUR_PX = 500
 
 function blurPxFromObject(
   obj: FabricObject & { avnacBlur?: number },
@@ -15,6 +16,57 @@ function blurPxFromObject(
   const pct = obj.avnacBlur
   if (typeof pct !== 'number' || !Number.isFinite(pct) || pct <= 0) return 0
   return (Math.min(100, Math.max(0, pct)) / 100) * MAX_CSS_BLUR_PX
+}
+
+function objectOrDescendantHasBlur(
+  o: FabricObject,
+  mod: typeof import('fabric'),
+): boolean {
+  if (blurPxFromObject(o as FabricObject & { avnacBlur?: number }, false) > 0) {
+    return true
+  }
+  if (mod.Group && o instanceof mod.Group) {
+    for (const child of o.getObjects()) {
+      if (objectOrDescendantHasBlur(child, mod)) return true
+    }
+  }
+  return false
+}
+
+/**
+ * CSS filter blur draws outside object bounds; Fabric's bitmap cache clips it to a box.
+ * Skip caching for blurred objects (and groups that contain blurred descendants) so we
+ * paint on the real canvas context instead.
+ */
+function patchFabricObjectShouldCache(mod: typeof import('fabric')): void {
+  const proto = mod.FabricObject.prototype as FabricObject & {
+    shouldCache: () => boolean
+  }
+  const orig = proto.shouldCache
+  proto.shouldCache = function (this: FabricObject & { avnacBlur?: number }) {
+    if (blurPxFromObject(this, false) > 0) {
+      this.ownCaching = false
+      return false
+    }
+    return orig.call(this)
+  }
+}
+
+function patchGroupShouldCache(mod: typeof import('fabric')): void {
+  const proto = mod.Group.prototype as Group & { shouldCache: () => boolean }
+  const orig = proto.shouldCache
+  proto.shouldCache = function (this: Group) {
+    const ownCache = mod.FabricObject.prototype.shouldCache.call(this)
+    if (ownCache) {
+      for (const child of this.getObjects()) {
+        if (objectOrDescendantHasBlur(child, mod)) {
+          this.ownCaching = false
+          return false
+        }
+      }
+    }
+    return orig.call(this)
+  }
 }
 
 function patchDrawObject(
@@ -52,6 +104,11 @@ export function installAvnacObjectCanvasBlur(
     const cacheProps = FO?.cacheProperties
     if (Array.isArray(cacheProps) && !cacheProps.includes('avnacBlur')) {
       FO.cacheProperties = [...cacheProps, 'avnacBlur']
+    }
+
+    patchFabricObjectShouldCache(mod)
+    if (mod.Group && typeof mod.Group.prototype?.shouldCache === 'function') {
+      patchGroupShouldCache(mod)
     }
 
     if (typeof FO?.prototype?.drawObject === 'function') {
