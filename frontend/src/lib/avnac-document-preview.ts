@@ -13,6 +13,7 @@ const OBJECT_SERIAL_KEYS = [
   'avnacFill',
   'avnacStroke',
   'avnacLayerId',
+  'avnacLayerName',
   'avnacVectorBoardId',
 ] as const
 
