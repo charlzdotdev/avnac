@@ -3,7 +3,9 @@ import { Home05Icon } from "@hugeicons/core-free-icons";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { usePostHog } from "posthog-js/react";
-import EditorExportMenu from "../components/editor-export-menu";
+import EditorExportMenu, {
+  type ExportRequest,
+} from "../components/editor-export-menu";
 import FabricEditor, {
   type FabricEditorHandle,
 } from "../components/fabric-editor";
@@ -85,6 +87,20 @@ function CreatePage() {
     }
   };
 
+  const onExport = (req: ExportRequest) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    if (req.format === "svg") {
+      editor.exportSvg();
+      return;
+    }
+    if (req.format === "jpeg") {
+      editor.exportJpeg(req);
+      return;
+    }
+    editor.exportPng(req);
+  };
+
   if (editorUnsupported) {
     return (
       <main className="hero-page relative flex min-h-[100dvh] flex-col overflow-hidden px-5 py-12 sm:px-8 sm:py-16">
@@ -163,7 +179,7 @@ function CreatePage() {
         <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
           <EditorExportMenu
             disabled={!editorReady}
-            onExport={(opts) => editorRef.current?.exportPng(opts)}
+            onExport={onExport}
           />
         </div>
       </header>

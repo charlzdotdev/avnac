@@ -143,6 +143,10 @@ import {
   loadExportSafeFabricImage,
   normalizeCanvasImagesForExport,
 } from '../lib/avnac-image-proxy'
+import {
+  downloadBlob,
+  safeAvnacFileBaseName,
+} from '../lib/avnac-files-export'
 import ShapeOptionsToolbar from './shape-options-toolbar'
 import TransparencyToolbarPopover from './transparency-toolbar-popover'
 import ShapesPopover, {
@@ -174,7 +178,11 @@ import ImageCropModal, {
   type ImageCropModalApplyPayload,
 } from './image-crop-modal'
 import { getAvnacLocked, setAvnacLocked } from '../lib/avnac-object-lock'
-import type { ExportPngOptions } from './editor-export-menu'
+import type {
+  ExportJpegOptions,
+  ExportPngOptions,
+  PngExportCrop,
+} from './editor-export-menu'
 import EditorFloatingSidebar, {
   type EditorSidebarPanelId,
 } from './editor-floating-sidebar'
@@ -341,6 +349,10 @@ function fabricObjectLabel(
 
 export type FabricEditorHandle = {
   exportPng: (opts?: ExportPngOptions) => void
+  exportJpeg: (opts?: ExportJpegOptions) => void
+  exportSvg: () => void
+  undo: () => void
+  redo: () => void
   saveDocument: () => void
   loadDocument: (file: File) => Promise<void>
 }
@@ -3171,103 +3183,190 @@ const FabricEditor = forwardRef<FabricEditorHandle, FabricEditorProps>(
     pasteFromClipboard,
   ])
 
+  const exportBaseName = useCallback(() => {
+    return safeAvnacFileBaseName(persistDisplayNameRef.current || 'Untitled')
+  }, [])
+
+  const resolveExportBounds = useCallback((crop: PngExportCrop = 'none') => {
+    const canvas = fabricCanvasRef.current
+    if (!canvas) {
+      return {
+        left: 0,
+        top: 0,
+        width: artboardWRef.current,
+        height: artboardHRef.current,
+      }
+    }
+
+    const aw = artboardWRef.current
+    const ah = artboardHRef.current
+    let left = 0
+    let top = 0
+    let width = aw
+    let height = ah
+
+    if (crop === 'selection') {
+      const active = canvas.getActiveObject()
+      if (active) {
+        const br = active.getBoundingRect()
+        left = br.left
+        top = br.top
+        width = Math.max(1, br.width)
+        height = Math.max(1, br.height)
+      }
+    } else if (crop === 'content') {
+      const objs = canvas.getObjects()
+      if (objs.length) {
+        let minX = Infinity
+        let minY = Infinity
+        let maxX = -Infinity
+        let maxY = -Infinity
+        for (const o of objs) {
+          const br = o.getBoundingRect()
+          minX = Math.min(minX, br.left)
+          minY = Math.min(minY, br.top)
+          maxX = Math.max(maxX, br.left + br.width)
+          maxY = Math.max(maxY, br.top + br.height)
+        }
+        const pad = 32
+        left = Math.max(0, minX - pad)
+        top = Math.max(0, minY - pad)
+        width = Math.max(1, Math.min(aw, maxX + pad) - left)
+        height = Math.max(1, Math.min(ah, maxY + pad) - top)
+      }
+    }
+
+    return { left, top, width, height }
+  }, [])
+
+  const exportRaster = useCallback(
+    (
+      format: 'png' | 'jpeg',
+      opts?: {
+        multiplier?: number
+        transparent?: boolean
+        crop?: PngExportCrop
+        quality?: number
+      },
+    ) => {
+      void (async () => {
+        const canvas = fabricCanvasRef.current
+        const mod = fabricModRef.current
+        if (!canvas || !mod) return
+        setExportError(null)
+
+        const mult = opts?.multiplier ?? 1
+        const transparent = opts?.transparent ?? false
+        const crop = opts?.crop ?? 'none'
+        const bounds = resolveExportBounds(crop)
+
+        try {
+          await normalizeCanvasImagesForExport(canvas, mod)
+          const prevBg = canvas.backgroundColor
+          let resetBg = false
+          try {
+            if (format === 'png' && transparent) {
+              canvas.backgroundColor = 'transparent'
+              resetBg = true
+              canvas.requestRenderAll()
+            }
+
+            if (format === 'jpeg') {
+              canvas.backgroundColor =
+                typeof prevBg === 'string' && prevBg !== 'transparent'
+                  ? prevBg
+                  : '#ffffff'
+              resetBg = true
+              canvas.requestRenderAll()
+            }
+
+            const data = canvas.toDataURL({
+              format,
+              quality: format === 'jpeg' ? (opts?.quality ?? 0.92) : undefined,
+              multiplier: mult,
+              left: bounds.left,
+              top: bounds.top,
+              width: bounds.width,
+              height: bounds.height,
+            })
+
+            const a = document.createElement('a')
+            a.href = data
+            const suffix = crop === 'none' ? '' : '-cropped'
+            a.download = `${exportBaseName()}${suffix}.${format === 'png' ? 'png' : 'jpg'}`
+            a.click()
+          } finally {
+            if (resetBg) {
+              canvas.backgroundColor = prevBg
+              canvas.requestRenderAll()
+            }
+          }
+        } catch (err) {
+          console.error(`FabricEditor: ${format.toUpperCase()} export failed`, err)
+          setExportError(
+            'Could not export this canvas. External images could not be prepared for download.',
+          )
+        }
+      })()
+    },
+    [exportBaseName, resolveExportBounds],
+  )
+
   const exportPng = useCallback((opts?: ExportPngOptions) => {
+    exportRaster('png', {
+      multiplier: opts?.multiplier,
+      transparent: opts?.transparent,
+      crop: opts?.crop,
+    })
+  }, [exportRaster])
+
+  const exportJpeg = useCallback((opts?: ExportJpegOptions) => {
+    exportRaster('jpeg', {
+      multiplier: opts?.multiplier,
+      quality: opts?.quality,
+      crop: opts?.crop,
+    })
+  }, [exportRaster])
+
+  const exportSvg = useCallback(() => {
     void (async () => {
       const canvas = fabricCanvasRef.current
       const mod = fabricModRef.current
       if (!canvas || !mod) return
       setExportError(null)
-      const mult = opts?.multiplier ?? 1
-      const transparent = opts?.transparent ?? false
-      const crop = opts?.crop ?? 'none'
-      const aw = artboardWRef.current
-      const ah = artboardHRef.current
-
-      let left = 0
-      let top = 0
-      let width = aw
-      let height = ah
-
-      if (crop === 'selection') {
-        const a = canvas.getActiveObject()
-        if (a) {
-          const br = a.getBoundingRect()
-          left = br.left
-          top = br.top
-          width = Math.max(1, br.width)
-          height = Math.max(1, br.height)
-        }
-      } else if (crop === 'content') {
-        const objs = canvas.getObjects()
-        if (objs.length) {
-          let minX = Infinity
-          let minY = Infinity
-          let maxX = -Infinity
-          let maxY = -Infinity
-          for (const o of objs) {
-            const br = o.getBoundingRect()
-            minX = Math.min(minX, br.left)
-            minY = Math.min(minY, br.top)
-            maxX = Math.max(maxX, br.left + br.width)
-            maxY = Math.max(maxY, br.top + br.height)
-          }
-          const pad = 32
-          left = Math.max(0, minX - pad)
-          top = Math.max(0, minY - pad)
-          width = Math.max(1, Math.min(aw, maxX + pad) - left)
-          height = Math.max(1, Math.min(ah, maxY + pad) - top)
-        }
-      }
-
       try {
         await normalizeCanvasImagesForExport(canvas, mod)
-        const prevBg = canvas.backgroundColor
-        try {
-          if (transparent) {
-            canvas.backgroundColor = 'transparent'
-            canvas.requestRenderAll()
-          }
-
-          const data = canvas.toDataURL({
-            format: 'png',
-            multiplier: mult,
-            left,
-            top,
+        const width = artboardWRef.current
+        const height = artboardHRef.current
+        const svg = canvas.toSVG({
+          width,
+          height,
+          viewBox: {
+            x: 0,
+            y: 0,
             width,
             height,
-          })
-
-          const a = document.createElement('a')
-          a.href = data
-          a.download =
-            crop === 'none' ? 'avnac-design.png' : 'avnac-design-cropped.png'
-          a.click()
-        } finally {
-          if (transparent) {
-            canvas.backgroundColor = prevBg
-            canvas.requestRenderAll()
-          }
-        }
+          },
+        })
+        const blob = new Blob([svg], {
+          type: 'image/svg+xml;charset=utf-8',
+        })
+        downloadBlob(blob, `${exportBaseName()}.svg`)
       } catch (err) {
-        console.error('FabricEditor: PNG export failed', err)
+        console.error('FabricEditor: SVG export failed', err)
         setExportError(
           'Could not export this canvas. External images could not be prepared for download.',
         )
       }
     })()
-  }, [])
+  }, [exportBaseName])
 
   const saveDocument = useCallback(() => {
     const doc = captureDoc()
     const blob = new Blob([JSON.stringify(doc, null, 2)], {
       type: 'application/json',
     })
-    const u = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = u
-    a.download = 'avnac-document.json'
-    a.click()
-    URL.revokeObjectURL(u)
+    downloadBlob(blob, 'avnac-document.json')
   }, [captureDoc])
 
   const loadDocument = useCallback(
@@ -3594,8 +3693,20 @@ const FabricEditor = forwardRef<FabricEditorHandle, FabricEditorProps>(
 
   useImperativeHandle(
     ref,
-    () => ({ exportPng, saveDocument, loadDocument }),
-    [exportPng, saveDocument, loadDocument],
+    () => ({
+      exportPng,
+      exportJpeg,
+      exportSvg,
+      undo: () => {
+        void undo()
+      },
+      redo: () => {
+        void redo()
+      },
+      saveDocument,
+      loadDocument,
+    }),
+    [exportPng, exportJpeg, exportSvg, undo, redo, saveDocument, loadDocument],
   )
 
   const onReadyChangeRef = useRef(onReadyChange)

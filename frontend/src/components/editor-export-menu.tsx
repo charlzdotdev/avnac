@@ -14,12 +14,23 @@ export type ExportPngOptions = {
   crop?: PngExportCrop;
 };
 
+export type ExportJpegOptions = {
+  multiplier: number;
+  quality?: number;
+  crop?: PngExportCrop;
+};
+
+export type ExportRequest =
+  | ({ format: "png" } & ExportPngOptions)
+  | ({ format: "jpeg" } & ExportJpegOptions)
+  | { format: "svg" };
+
 const DEFAULT_EXPORT: ExportPngOptions = {
   multiplier: 1,
   transparent: false,
 };
 
-const PANEL_ESTIMATE_H = 220;
+const PANEL_ESTIMATE_H = 280;
 
 const exportTriggerClass = [
   "inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-full border border-black/[0.08] px-4 text-sm font-medium sm:h-10 sm:px-5",
@@ -33,11 +44,12 @@ const exportTriggerClass = [
 
 type Props = {
   disabled?: boolean;
-  onExport: (opts: ExportPngOptions) => void;
+  onExport: (opts: ExportRequest) => void;
 };
 
 export default function EditorExportMenu({ disabled, onExport }: Props) {
   const [open, setOpen] = useState(false);
+  const [format, setFormat] = useState<"png" | "jpeg" | "svg">("png");
   const [opts, setOpts] = useState<ExportPngOptions>(DEFAULT_EXPORT);
   const posthog = usePostHog();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -63,6 +75,15 @@ export default function EditorExportMenu({ disabled, onExport }: Props) {
   }, [open]);
 
   const mult = Math.max(1, Math.min(3, Math.round(opts.multiplier)));
+  const isRaster = format !== "svg";
+  const showTransparentToggle = format === "png";
+  const formatBtn = (active: boolean) =>
+    [
+      "rounded-lg px-2.5 py-1.5 text-[12px] font-semibold transition-colors",
+      active
+        ? "bg-neutral-900 text-white shadow-sm"
+        : "text-neutral-600 hover:bg-black/[0.05] hover:text-neutral-800",
+    ].join(" ");
 
   return (
     <div ref={rootRef} className="relative shrink-0">
@@ -97,45 +118,108 @@ export default function EditorExportMenu({ disabled, onExport }: Props) {
           role="dialog"
           aria-label="Export"
         >
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <span className="text-[13px] font-medium text-neutral-800">
-              Export scale
-            </span>
-            <span className="text-[13px] tabular-nums text-neutral-600">
-              {mult}×
-            </span>
+          <div className="mb-4 flex items-center gap-1 rounded-lg bg-neutral-100 p-0.5">
+            <button
+              type="button"
+              className={formatBtn(format === "png")}
+              onClick={() => setFormat("png")}
+            >
+              PNG
+            </button>
+            <button
+              type="button"
+              className={formatBtn(format === "jpeg")}
+              onClick={() => setFormat("jpeg")}
+            >
+              JPEG
+            </button>
+            <button
+              type="button"
+              className={formatBtn(format === "svg")}
+              onClick={() => setFormat("svg")}
+            >
+              SVG
+            </button>
           </div>
-          <EditorRangeSlider
-            min={1}
-            max={3}
-            step={1}
-            value={mult}
-            onChange={(n) =>
-              setOpts((p) => ({ ...p, multiplier: Math.round(n) }))
-            }
-            aria-label="PNG export scale"
-            aria-valuemin={1}
-            aria-valuemax={3}
-            aria-valuenow={mult}
-            trackClassName="mb-4 w-full"
-          />
-          <label className="mb-4 flex cursor-pointer items-center gap-2.5 text-[13px] text-neutral-800">
-            <input
-              type="checkbox"
-              checked={opts.transparent}
-              onChange={(e) =>
-                setOpts((p) => ({ ...p, transparent: e.target.checked }))
-              }
-              className="size-4 shrink-0 rounded border border-black/20"
-              style={{ accentColor: "var(--accent)" }}
-            />
-            Transparent background
-          </label>
+          {isRaster ? (
+            <>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <span className="text-[13px] font-medium text-neutral-800">
+                  Export scale
+                </span>
+                <span className="text-[13px] tabular-nums text-neutral-600">
+                  {mult}×
+                </span>
+              </div>
+              <EditorRangeSlider
+                min={1}
+                max={3}
+                step={1}
+                value={mult}
+                onChange={(n) =>
+                  setOpts((p) => ({ ...p, multiplier: Math.round(n) }))
+                }
+                aria-label={`${format.toUpperCase()} export scale`}
+                aria-valuemin={1}
+                aria-valuemax={3}
+                aria-valuenow={mult}
+                trackClassName="mb-4 w-full"
+              />
+              {showTransparentToggle ? (
+                <label className="mb-4 flex cursor-pointer items-center gap-2.5 text-[13px] text-neutral-800">
+                  <input
+                    type="checkbox"
+                    checked={opts.transparent}
+                    onChange={(e) =>
+                      setOpts((p) => ({ ...p, transparent: e.target.checked }))
+                    }
+                    className="size-4 shrink-0 rounded border border-black/20"
+                    style={{ accentColor: "var(--accent)" }}
+                  />
+                  Transparent background
+                </label>
+              ) : (
+                <p className="mb-4 text-[12px] text-neutral-600">
+                  JPEG exports flatten transparency to the canvas background.
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="mb-4 text-[12px] text-neutral-600">
+              SVG preserves vectors and text when possible.
+            </p>
+          )}
           <button
             type="button"
             className="w-full rounded-lg bg-neutral-900 py-2.5 text-[13px] font-medium text-white transition-colors hover:bg-neutral-800"
             onClick={() => {
-              const finalOpts = { ...opts, multiplier: mult };
+              if (format === "svg") {
+                posthog.capture("svg_exported");
+                onExport({ format: "svg" });
+                setOpen(false);
+                return;
+              }
+
+              if (format === "jpeg") {
+                const finalOpts = {
+                  format: "jpeg" as const,
+                  multiplier: mult,
+                  quality: 0.92,
+                };
+                posthog.capture("jpeg_exported", {
+                  scale: finalOpts.multiplier,
+                  quality: finalOpts.quality,
+                });
+                onExport(finalOpts);
+                setOpen(false);
+                return;
+              }
+
+              const finalOpts = {
+                format: "png" as const,
+                ...opts,
+                multiplier: mult,
+              };
               posthog.capture("png_exported", {
                 scale: finalOpts.multiplier,
                 transparent: finalOpts.transparent,
@@ -144,7 +228,7 @@ export default function EditorExportMenu({ disabled, onExport }: Props) {
               setOpen(false);
             }}
           >
-            Download PNG
+            Download {format.toUpperCase()}
           </button>
         </div>
       ) : null}
