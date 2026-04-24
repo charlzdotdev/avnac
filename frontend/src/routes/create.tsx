@@ -1,5 +1,9 @@
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Home05Icon } from "@hugeicons/core-free-icons";
+import {
+  Home05Icon,
+  Redo02Icon,
+  Undo02Icon,
+} from "@hugeicons/core-free-icons";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { usePostHog } from "posthog-js/react";
@@ -27,6 +31,9 @@ function parseSearchDimension(v: unknown): number | undefined {
   if (!Number.isFinite(n)) return undefined;
   return Math.min(16000, Math.max(100, Math.round(n)));
 }
+
+const headerActionClass =
+  "inline-flex size-9 shrink-0 items-center justify-center rounded-full border border-black/[0.1] bg-white/90 text-[var(--text)] outline-none transition-colors hover:bg-white disabled:pointer-events-none disabled:opacity-40 sm:size-10";
 
 export const Route = createFileRoute("/create")({
   validateSearch: (raw: Record<string, unknown>): CreateSearch => {
@@ -144,7 +151,7 @@ function CreatePage() {
 
   return (
     <div className="flex h-[100dvh] min-h-0 flex-col bg-[var(--surface-subtle)]">
-      <header className="flex flex-shrink-0 items-center gap-3 border-b border-[var(--line)] bg-[var(--surface)] px-4 py-3 sm:px-5 sm:py-3.5">
+      <header className="relative flex flex-shrink-0 items-center gap-3 border-b border-[var(--line)] bg-[var(--surface)] px-4 py-3 sm:px-5 sm:py-3.5">
         <Link
           to="/files"
           className="inline-flex size-10 shrink-0 items-center justify-center rounded-full text-[var(--text-muted)] no-underline transition-colors hover:bg-[var(--hover)] hover:text-[var(--text)]"
@@ -176,7 +183,51 @@ function CreatePage() {
             spellCheck={false}
           />
         </div>
+        <div className="pointer-events-none absolute inset-x-0 top-1/2 hidden -translate-y-1/2 justify-center sm:flex">
+          <div className="pointer-events-auto flex items-center gap-1.5">
+            <button
+              type="button"
+              className={headerActionClass}
+              disabled={!editorReady}
+              aria-label="Undo"
+              title="Undo (Cmd/Ctrl + Z)"
+              onClick={() => editorRef.current?.undo()}
+            >
+              <HugeiconsIcon icon={Undo02Icon} size={16} strokeWidth={1.9} />
+            </button>
+            <button
+              type="button"
+              className={headerActionClass}
+              disabled={!editorReady}
+              aria-label="Redo"
+              title="Redo (Cmd/Ctrl + Shift + Z)"
+              onClick={() => editorRef.current?.redo()}
+            >
+              <HugeiconsIcon icon={Redo02Icon} size={16} strokeWidth={1.9} />
+            </button>
+          </div>
+        </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
+          <button
+            type="button"
+            className={`${headerActionClass} sm:hidden`}
+            disabled={!editorReady}
+            aria-label="Undo"
+            title="Undo (Cmd/Ctrl + Z)"
+            onClick={() => editorRef.current?.undo()}
+          >
+            <HugeiconsIcon icon={Undo02Icon} size={16} strokeWidth={1.9} />
+          </button>
+          <button
+            type="button"
+            className={`${headerActionClass} sm:hidden`}
+            disabled={!editorReady}
+            aria-label="Redo"
+            title="Redo (Cmd/Ctrl + Shift + Z)"
+            onClick={() => editorRef.current?.redo()}
+          >
+            <HugeiconsIcon icon={Redo02Icon} size={16} strokeWidth={1.9} />
+          </button>
           <EditorExportMenu
             disabled={!editorReady}
             onExport={onExport}
