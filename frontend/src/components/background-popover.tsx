@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react'
 import EditorRangeSlider from './editor-range-slider'
 import { floatingToolbarPopoverClass } from './floating-toolbar-shell'
 
@@ -162,6 +169,223 @@ function clampAngle(n: number): number {
   return Math.min(360, Math.max(0, Math.round(n)))
 }
 
+type RgbColor = { r: number; g: number; b: number }
+type HsvColor = { h: number; s: number; v: number }
+
+const COLOR_WHEEL_SIZE = 168
+
+function clamp01(n: number): number {
+  if (!Number.isFinite(n)) return 0
+  return Math.min(1, Math.max(0, n))
+}
+
+function clampByte(n: number): number {
+  return Math.min(255, Math.max(0, Math.round(n)))
+}
+
+function hexToRgb(hex: string): RgbColor | null {
+  if (!HEX6.test(hex)) return null
+  const s = hex.slice(1)
+  return {
+    r: parseInt(s.slice(0, 2), 16),
+    g: parseInt(s.slice(2, 4), 16),
+    b: parseInt(s.slice(4, 6), 16),
+  }
+}
+
+function rgbToHex(rgb: RgbColor): string {
+  const toHex = (n: number) => clampByte(n).toString(16).padStart(2, '0')
+  return `#${toHex(rgb.r)}${toHex(rgb.g)}${toHex(rgb.b)}`
+}
+
+function rgbToHsv(rgb: RgbColor): HsvColor {
+  const r = clamp01(rgb.r / 255)
+  const g = clamp01(rgb.g / 255)
+  const b = clamp01(rgb.b / 255)
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const d = max - min
+
+  let h = 0
+  if (d > 0) {
+    if (max === r) h = 60 * (((g - b) / d) % 6)
+    else if (max === g) h = 60 * ((b - r) / d + 2)
+    else h = 60 * ((r - g) / d + 4)
+  }
+
+  if (h < 0) h += 360
+  const s = max === 0 ? 0 : d / max
+  const v = max
+  return { h, s, v }
+}
+
+function hsvToRgb(hsv: HsvColor): RgbColor {
+  const h = ((hsv.h % 360) + 360) % 360
+  const s = clamp01(hsv.s)
+  const v = clamp01(hsv.v)
+  const c = v * s
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
+  const m = v - c
+  let r1 = 0
+  let g1 = 0
+  let b1 = 0
+
+  if (h < 60) {
+    r1 = c
+    g1 = x
+  } else if (h < 120) {
+    r1 = x
+    g1 = c
+  } else if (h < 180) {
+    g1 = c
+    b1 = x
+  } else if (h < 240) {
+    g1 = x
+    b1 = c
+  } else if (h < 300) {
+    r1 = x
+    b1 = c
+  } else {
+    r1 = c
+    b1 = x
+  }
+
+  return {
+    r: clampByte((r1 + m) * 255),
+    g: clampByte((g1 + m) * 255),
+    b: clampByte((b1 + m) * 255),
+  }
+}
+
+function hexToHsv(hex: string): HsvColor | null {
+  const rgb = hexToRgb(hex)
+  if (!rgb) return null
+  return rgbToHsv(rgb)
+}
+
+function colorWheelMarker(hsv: HsvColor): { left: number; top: number } {
+  const radius = COLOR_WHEEL_SIZE / 2
+  const theta = (hsv.h * Math.PI) / 180
+  const dist = clamp01(hsv.s) * radius
+  return {
+    left: radius + Math.cos(theta) * dist,
+    top: radius + Math.sin(theta) * dist,
+  }
+}
+
+type SolidColorWheelProps = {
+  value: string
+  onChange: (hex: string) => void
+}
+
+function SolidColorWheel({ value, onChange }: SolidColorWheelProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [dragging, setDragging] = useState(false)
+  const hsv = useMemo(() => hexToHsv(value) ?? { h: 0, s: 0, v: 1 }, [value])
+
+  const drawWheel = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const size = COLOR_WHEEL_SIZE
+    const radius = size / 2
+    canvas.width = size
+    canvas.height = size
+
+    const img = ctx.createImageData(size, size)
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        const dx = x - radius
+        const dy = y - radius
+        const dist = Math.hypot(dx, dy)
+        const idx = (y * size + x) * 4
+        if (dist > radius) {
+          img.data[idx + 3] = 0
+          continue
+        }
+        const h = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360
+        const s = dist / radius
+        const rgb = hsvToRgb({ h, s, v: 1 })
+        img.data[idx] = rgb.r
+        img.data[idx + 1] = rgb.g
+        img.data[idx + 2] = rgb.b
+        img.data[idx + 3] = 255
+      }
+    }
+    ctx.putImageData(img, 0, 0)
+  }, [])
+
+  useEffect(() => {
+    drawWheel()
+  }, [drawWheel])
+
+  const updateFromPointer = useCallback(
+    (clientX: number, clientY: number) => {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      const rect = canvas.getBoundingClientRect()
+      const radius = COLOR_WHEEL_SIZE / 2
+      let dx = clientX - rect.left - radius
+      let dy = clientY - rect.top - radius
+      let dist = Math.hypot(dx, dy)
+      if (dist > radius) {
+        dx = (dx / dist) * radius
+        dy = (dy / dist) * radius
+        dist = radius
+      }
+      const h = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360
+      const s = clamp01(dist / radius)
+      onChange(rgbToHex(hsvToRgb({ h, s, v: 1 })))
+    },
+    [onChange],
+  )
+
+  const marker = colorWheelMarker(hsv)
+
+  return (
+    <div className="relative h-[168px] w-[168px]">
+      <canvas
+        ref={canvasRef}
+        className="h-full w-full rounded-full border border-black/15 shadow-[inset_0_1px_8px_rgba(0,0,0,0.1)]"
+        onPointerDown={(e) => {
+          e.preventDefault()
+          e.currentTarget.setPointerCapture(e.pointerId)
+          setDragging(true)
+          updateFromPointer(e.clientX, e.clientY)
+        }}
+        onPointerMove={(e) => {
+          if (!dragging) return
+          updateFromPointer(e.clientX, e.clientY)
+        }}
+        onPointerUp={(e) => {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+            e.currentTarget.releasePointerCapture(e.pointerId)
+          }
+          setDragging(false)
+        }}
+        onPointerCancel={(e) => {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+            e.currentTarget.releasePointerCapture(e.pointerId)
+          }
+          setDragging(false)
+        }}
+        aria-label="Color wheel"
+      />
+      <span
+        className="pointer-events-none absolute z-[1] h-3.5 w-3.5 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)]"
+        style={{
+          left: marker.left,
+          top: marker.top,
+          transform: 'translate(-50%, -50%)',
+        }}
+        aria-hidden
+      />
+    </div>
+  )
+}
+
 export function bgValueToCss(v: BgValue): string {
   return v.type === 'solid' ? v.color : v.css
 }
@@ -299,6 +523,18 @@ export default function BackgroundPopover({
                 title={hex === 'transparent' ? 'Transparent' : hex}
               />
             ))}
+          </div>
+
+          <div className="mb-3 rounded-lg border border-black/10 bg-neutral-50/50 p-2.5">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+              Color wheel
+            </p>
+            <div className="flex justify-center">
+              <SolidColorWheel
+                value={HEX6.test(customColor) ? customColor : '#ffffff'}
+                onChange={(hex) => applySolid(hex)}
+              />
+            </div>
           </div>
 
           <div className="flex items-center gap-2.5 rounded-lg border border-black/10 px-2.5 py-2">
