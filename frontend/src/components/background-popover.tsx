@@ -172,8 +172,6 @@ function clampAngle(n: number): number {
 type RgbColor = { r: number; g: number; b: number }
 type HsvColor = { h: number; s: number; v: number }
 
-const COLOR_WHEEL_SIZE = 168
-
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0
   return Math.min(1, Math.max(0, n))
@@ -263,125 +261,129 @@ function hexToHsv(hex: string): HsvColor | null {
   return rgbToHsv(rgb)
 }
 
-function colorWheelMarker(hsv: HsvColor): { left: number; top: number } {
-  const radius = COLOR_WHEEL_SIZE / 2
-  const theta = (hsv.h * Math.PI) / 180
-  const dist = clamp01(hsv.s) * radius
-  return {
-    left: radius + Math.cos(theta) * dist,
-    top: radius + Math.sin(theta) * dist,
-  }
-}
-
-type SolidColorWheelProps = {
+type SolidColorRectPickerProps = {
   value: string
   onChange: (hex: string) => void
 }
 
-function SolidColorWheel({ value, onChange }: SolidColorWheelProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [dragging, setDragging] = useState(false)
+function SolidColorRectPicker({ value, onChange }: SolidColorRectPickerProps) {
+  const svRef = useRef<HTMLDivElement>(null)
+  const hueRef = useRef<HTMLDivElement>(null)
+  const [svDragging, setSvDragging] = useState(false)
+  const [hueDragging, setHueDragging] = useState(false)
   const hsv = useMemo(() => hexToHsv(value) ?? { h: 0, s: 0, v: 1 }, [value])
 
-  const drawWheel = useCallback(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    const size = COLOR_WHEEL_SIZE
-    const radius = size / 2
-    canvas.width = size
-    canvas.height = size
-
-    const img = ctx.createImageData(size, size)
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const dx = x - radius
-        const dy = y - radius
-        const dist = Math.hypot(dx, dy)
-        const idx = (y * size + x) * 4
-        if (dist > radius) {
-          img.data[idx + 3] = 0
-          continue
-        }
-        const h = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360
-        const s = dist / radius
-        const rgb = hsvToRgb({ h, s, v: 1 })
-        img.data[idx] = rgb.r
-        img.data[idx + 1] = rgb.g
-        img.data[idx + 2] = rgb.b
-        img.data[idx + 3] = 255
-      }
-    }
-    ctx.putImageData(img, 0, 0)
-  }, [])
-
-  useEffect(() => {
-    drawWheel()
-  }, [drawWheel])
-
-  const updateFromPointer = useCallback(
+  const updateFromSvPointer = useCallback(
     (clientX: number, clientY: number) => {
-      const canvas = canvasRef.current
-      if (!canvas) return
-      const rect = canvas.getBoundingClientRect()
-      const radius = COLOR_WHEEL_SIZE / 2
-      let dx = clientX - rect.left - radius
-      let dy = clientY - rect.top - radius
-      let dist = Math.hypot(dx, dy)
-      if (dist > radius) {
-        dx = (dx / dist) * radius
-        dy = (dy / dist) * radius
-        dist = radius
-      }
-      const h = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360
-      const s = clamp01(dist / radius)
-      onChange(rgbToHex(hsvToRgb({ h, s, v: 1 })))
+      const el = svRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      const s = clamp01((clientX - rect.left) / rect.width)
+      const v = clamp01(1 - (clientY - rect.top) / rect.height)
+      onChange(rgbToHex(hsvToRgb({ h: hsv.h, s, v })))
     },
-    [onChange],
+    [hsv.h, onChange],
   )
 
-  const marker = colorWheelMarker(hsv)
+  const updateFromHuePointer = useCallback(
+    (clientX: number) => {
+      const el = hueRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      const h = clamp01((clientX - rect.left) / rect.width) * 360
+      onChange(rgbToHex(hsvToRgb({ h, s: hsv.s, v: hsv.v })))
+    },
+    [hsv.s, hsv.v, onChange],
+  )
+
+  const safeHex = HEX6.test(value) ? value : '#ffffff'
+  const hueForBg = Math.round(hsv.h)
 
   return (
-    <div className="relative h-[168px] w-[168px]">
-      <canvas
-        ref={canvasRef}
-        className="h-full w-full rounded-full border border-black/15 shadow-[inset_0_1px_8px_rgba(0,0,0,0.1)]"
+    <div className="space-y-3">
+     
+
+      <div
+        ref={svRef}
+        className="relative h-32 w-full rounded-md border border-black/15"
+        style={{
+          backgroundImage: `linear-gradient(to top, #000 0%, rgba(0,0,0,0) 100%), linear-gradient(to right, #fff 0%, hsl(${hueForBg} 100% 50%) 100%)`,
+        }}
         onPointerDown={(e) => {
           e.preventDefault()
           e.currentTarget.setPointerCapture(e.pointerId)
-          setDragging(true)
-          updateFromPointer(e.clientX, e.clientY)
+          setSvDragging(true)
+          updateFromSvPointer(e.clientX, e.clientY)
         }}
         onPointerMove={(e) => {
-          if (!dragging) return
-          updateFromPointer(e.clientX, e.clientY)
+          if (!svDragging) return
+          updateFromSvPointer(e.clientX, e.clientY)
         }}
         onPointerUp={(e) => {
           if (e.currentTarget.hasPointerCapture(e.pointerId)) {
             e.currentTarget.releasePointerCapture(e.pointerId)
           }
-          setDragging(false)
+          setSvDragging(false)
         }}
         onPointerCancel={(e) => {
           if (e.currentTarget.hasPointerCapture(e.pointerId)) {
             e.currentTarget.releasePointerCapture(e.pointerId)
           }
-          setDragging(false)
+          setSvDragging(false)
         }}
-        aria-label="Color wheel"
-      />
-      <span
-        className="pointer-events-none absolute z-[1] h-3.5 w-3.5 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)]"
+        aria-label="Saturation and brightness"
+      >
+        <span
+          className="pointer-events-none absolute z-[1] h-3.5 w-3.5 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)]"
+          style={{
+            left: `${hsv.s * 100}%`,
+            top: `${(1 - hsv.v) * 100}%`,
+            transform: 'translate(-50%, -50%)',
+          }}
+          aria-hidden
+        />
+      </div>
+
+      <div
+        ref={hueRef}
+        className="relative h-3 w-full rounded-full border border-black/15"
         style={{
-          left: marker.left,
-          top: marker.top,
-          transform: 'translate(-50%, -50%)',
+          background:
+            'linear-gradient(to right, #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%)',
         }}
-        aria-hidden
-      />
+        onPointerDown={(e) => {
+          e.preventDefault()
+          e.currentTarget.setPointerCapture(e.pointerId)
+          setHueDragging(true)
+          updateFromHuePointer(e.clientX)
+        }}
+        onPointerMove={(e) => {
+          if (!hueDragging) return
+          updateFromHuePointer(e.clientX)
+        }}
+        onPointerUp={(e) => {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+            e.currentTarget.releasePointerCapture(e.pointerId)
+          }
+          setHueDragging(false)
+        }}
+        onPointerCancel={(e) => {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+            e.currentTarget.releasePointerCapture(e.pointerId)
+          }
+          setHueDragging(false)
+        }}
+        aria-label="Hue"
+      >
+        <span
+          className="pointer-events-none absolute top-1/2 z-[1] h-4 w-4 rounded-full border-2 border-white bg-transparent shadow-[0_0_0_1px_rgba(0,0,0,0.45)]"
+          style={{
+            left: `${(hsv.h / 360) * 100}%`,
+            transform: 'translate(-50%, -50%)',
+          }}
+          aria-hidden
+        />
+      </div>
     </div>
   )
 }
@@ -411,6 +413,7 @@ export default function BackgroundPopover({
   onChange,
 }: Props) {
   const [tab, setTab] = useState<Tab>(value.type === 'gradient' ? 'gradient' : 'solid')
+  const [showSolidPicker, setShowSolidPicker] = useState(false)
   const customColorRef = useRef<HTMLInputElement>(null)
   const gradColor1Ref = useRef<HTMLInputElement>(null)
   const gradColor2Ref = useRef<HTMLInputElement>(null)
@@ -440,6 +443,19 @@ export default function BackgroundPopover({
       setGradStop2(value.stops[1]?.color ?? '#764ba2')
     }
   }, [value])
+
+  useEffect(() => {
+    if (tab !== 'solid') setShowSolidPicker(false)
+  }, [tab])
+
+  useEffect(() => {
+    if (!showSolidPicker) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowSolidPicker(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showSolidPicker])
 
   function applySolid(hex: string) {
     setCustomColor(hex)
@@ -503,6 +519,32 @@ export default function BackgroundPopover({
       {tab === 'solid' ? (
         <div>
           <div className="mb-2.5 grid grid-cols-6 gap-2 justify-items-center">
+            <button
+              type="button"
+              className={`relative h-12 w-12 shrink-0 rounded-full border transition-shadow ${
+                showSolidPicker
+                  ? 'border-neutral-900 ring-2 ring-neutral-900/20'
+                  : 'border-black/10 hover:border-black/25'
+              }`}
+              style={{
+                background:
+                  'conic-gradient(from 0deg, #ff3b30, #ffcc00, #34c759, #32ade6, #5856d6, #ff2d55, #ff3b30)',
+              }}
+              onClick={() => setShowSolidPicker((v) => !v)}
+              aria-label="Open color picker"
+              title="Open color picker"
+            >
+              <span
+                className="pointer-events-none absolute inset-2 rounded-full border border-white/70"
+                style={{
+                  backgroundColor:
+                    value.type === 'solid' && HEX6.test(value.color)
+                      ? value.color
+                      : '#ffffff',
+                }}
+                aria-hidden
+              />
+            </button>
             {PRESET_SOLIDS.map((hex) => (
               <button
                 key={hex}
@@ -523,18 +565,6 @@ export default function BackgroundPopover({
                 title={hex === 'transparent' ? 'Transparent' : hex}
               />
             ))}
-          </div>
-
-          <div className="mb-3 rounded-lg border border-black/10 bg-neutral-50/50 p-2.5">
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
-              Color wheel
-            </p>
-            <div className="flex justify-center">
-              <SolidColorWheel
-                value={HEX6.test(customColor) ? customColor : '#ffffff'}
-                onChange={(hex) => applySolid(hex)}
-              />
-            </div>
           </div>
 
           <div className="flex items-center gap-2.5 rounded-lg border border-black/10 px-2.5 py-2">
@@ -567,13 +597,77 @@ export default function BackgroundPopover({
               onChange={(e) => {
                 const v = e.target.value
                 setCustomColor(v)
-                if (HEX6.test(v)) applySolid(v)
+                const hex = parseHexInput(v)
+                if (hex) applySolid(hex)
+              }}
+              onBlur={() => {
+                const hex = parseHexInput(customColor)
+                if (hex) {
+                  setCustomColor(hex)
+                  applySolid(hex)
+                  return
+                }
+                const fallback =
+                  value.type === 'solid' && typeof value.color === 'string'
+                    ? value.color
+                    : '#ffffff'
+                setCustomColor(fallback)
               }}
               className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 py-0.5 font-mono text-[13px] font-medium text-neutral-800 outline-none transition focus:border-black/10"
               spellCheck={false}
+              autoComplete="off"
+              placeholder="#000000"
               aria-label="Hex color"
             />
           </div>
+
+          {showSolidPicker ? (
+            <div
+              className="fixed inset-0 z-[21000] flex items-center justify-center bg-black/30 p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Color picker"
+              onMouseDown={(e) => {
+                if (e.target === e.currentTarget) setShowSolidPicker(false)
+              }}
+            >
+              <div
+                data-avnac-chrome
+                className="w-[min(420px,calc(100vw-2rem))] rounded-2xl border border-black/[0.08] bg-white p-3.5 shadow-2xl"
+              >
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <span className="text-[13px] font-semibold text-neutral-800">
+                    Color picker
+                  </span>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-2 rounded-md border border-black/10 bg-neutral-50 px-2 py-1 text-[11px] font-semibold text-neutral-700"
+                    onClick={() => setShowSolidPicker(false)}
+                  >
+                    Done
+                  </button>
+                </div>
+                <div className="mb-3 inline-flex items-center gap-2 rounded-md border border-black/10 bg-white px-2 py-1">
+                  <span
+                    className="h-4 w-4 rounded-sm border border-black/15"
+                    style={{
+                      backgroundColor: HEX6.test(customColor)
+                        ? customColor
+                        : '#ffffff',
+                    }}
+                    aria-hidden
+                  />
+                  <span className="font-mono text-[11px] font-semibold text-neutral-700">
+                    {(HEX6.test(customColor) ? customColor : '#ffffff').toUpperCase()}
+                  </span>
+                </div>
+                <SolidColorRectPicker
+                  value={HEX6.test(customColor) ? customColor : '#ffffff'}
+                  onChange={(hex) => applySolid(hex)}
+                />
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : (
         <div>

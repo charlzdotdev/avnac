@@ -82,7 +82,7 @@ export default function EditorExportMenu({ disabled, onExport }: Props) {
       "rounded-lg px-2.5 py-1.5 text-[12px] font-semibold transition-colors",
       active
         ? "bg-neutral-900 text-white shadow-sm"
-        : "text-neutral-600 hover:bg-black/[0.05] hover:text-neutral-800",
+        : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200 hover:text-neutral-800",
     ].join(" ");
 
   return (
@@ -118,7 +118,7 @@ export default function EditorExportMenu({ disabled, onExport }: Props) {
           role="dialog"
           aria-label="Export"
         >
-          <div className="mb-4 flex items-center gap-1 rounded-lg bg-neutral-100 p-0.5">
+          <div className="mb-4 flex items-center gap-1">
             <button
               type="button"
               className={formatBtn(format === "png")}
