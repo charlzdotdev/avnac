@@ -15,7 +15,8 @@ export function downloadBlob(blob: Blob, fileName: string): void {
   a.href = u
   a.download = fileName
   a.click()
-  URL.revokeObjectURL(u)
+  // Defer revocation so WebKit has time to start the download.
+  setTimeout(() => URL.revokeObjectURL(u), 0)
 }
 
 export async function downloadAvnacJsonForId(id: string): Promise<boolean> {

@@ -3272,12 +3272,17 @@ const FabricEditor = forwardRef<FabricEditorHandle, FabricEditorProps>(
             }
 
             if (format === 'jpeg') {
-              canvas.backgroundColor =
-                typeof prevBg === 'string' && prevBg !== 'transparent'
-                  ? prevBg
-                  : '#ffffff'
-              resetBg = true
-              canvas.requestRenderAll()
+              if (typeof prevBg === 'string') {
+                if (prevBg === 'transparent') {
+                  canvas.backgroundColor = '#ffffff'
+                  resetBg = true
+                  canvas.requestRenderAll()
+                }
+              } else if (prevBg == null) {
+                canvas.backgroundColor = '#ffffff'
+                resetBg = true
+                canvas.requestRenderAll()
+              }
             }
 
             const data = canvas.toDataURL({
@@ -3339,8 +3344,8 @@ const FabricEditor = forwardRef<FabricEditorHandle, FabricEditorProps>(
         const width = artboardWRef.current
         const height = artboardHRef.current
         const svg = canvas.toSVG({
-          width,
-          height,
+          width: String(width),
+          height: String(height),
           viewBox: {
             x: 0,
             y: 0,

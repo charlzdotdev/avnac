@@ -296,7 +296,6 @@ function SolidColorRectPicker({ value, onChange }: SolidColorRectPickerProps) {
     [hsv.s, hsv.v, onChange],
   )
 
-  const safeHex = HEX6.test(value) ? value : '#ffffff'
   const hueForBg = Math.round(hsv.h)
 
   return (
